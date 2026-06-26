@@ -6,11 +6,12 @@
   <title>Find Your Ward Widget</title>
   <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
   <style>
-    body {
+    html, body {
       font-family: Arial, sans-serif;
       margin: 0;
       padding: 0;
       background: transparent;
+      overflow: hidden;
     }
     .ward-widget {
       max-width: 360px;
@@ -63,6 +64,11 @@
   />
   <button id="findBtn" onclick="findWard()">Find Ward</button>
   <div id="result"></div>
+  <div style="font-size: 11px; color: #888; margin-top: 8px;">
+    Geocoding by <a href="https://opencagedata.com" target="_blank" rel="noopener">OpenCage</a>,
+    <a href="https://www.zippopotam.us" target="_blank" rel="noopener">Zippopotam</a>, and
+    <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors.
+  </div>
 </div>
 <script>
 // EMBEDDED GEOJSON (Hamilton wards)
@@ -90,7 +96,7 @@ async function findWard() {
   const btn = document.getElementById('findBtn');
 
   if (!postalRaw) {
-    result.innerHTML = 'Please enter a postal code.';
+    result.textContent = 'Please enter a postal code.';
     return;
   }
 
@@ -98,7 +104,7 @@ async function findWard() {
 
   btn.disabled = true;
   btn.textContent = 'Searching…';
-  result.innerHTML = 'Looking up postal code…';
+  result.textContent = 'Looking up postal code…';
 
   try {
     let lat = null;
@@ -163,13 +169,14 @@ async function findWard() {
     }
 
     if (lat === null || lon === null || isNaN(lat) || isNaN(lon)) {
-      result.innerHTML = 'Postal code not found. Please double-check it and try again.';
+      result.textContent = 'Postal code not found. Please double-check it and try again.';
       return;
     }
 
     const point = turf.point([lon, lat]);
     let foundWard = null;
 
+    // Pass 1: strict point-in-polygon check
     for (const feature of wardData.features) {
       if (turf.booleanPointInPolygon(point, feature)) {
         foundWard = feature.properties.WARD;
@@ -177,14 +184,43 @@ async function findWard() {
       }
     }
 
+    // Pass 2: boundary-proximity fallback. If the point didn't land inside
+    // any polygon (e.g. it's a meter or two outside a ward line due to
+    // geocoding precision or floating-point rounding), snap to the nearest
+    // ward boundary as long as it's within a small allowed distance.
+    if (foundWard === null) {
+      const boundaryFallbackDistanceMeters = 250;
+      let closestDistance = Infinity;
+      let closestWard = null;
+
+      for (const feature of wardData.features) {
+        const polygonLines = turf.polygonToLine(feature);
+        const snapped = turf.pointOnLine(polygonLines, point, { units: 'meters' });
+        const distance = snapped.properties.dist;
+
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          closestWard = feature.properties.WARD;
+        }
+      }
+
+      if (closestDistance <= boundaryFallbackDistanceMeters) {
+        foundWard = closestWard;
+      }
+    }
+
     if (foundWard !== null) {
-      result.innerHTML = `<strong>Ward ${foundWard}</strong>`;
+      // Safe DOM rendering instead of injecting the value via innerHTML.
+      result.replaceChildren();
+      const strong = document.createElement('strong');
+      strong.textContent = `Ward ${foundWard}`;
+      result.appendChild(strong);
     } else {
-      result.innerHTML = 'That postal code falls outside the mapped wards.';
+      result.textContent = 'That postal code falls outside the mapped wards.';
     }
   } catch (err) {
     console.error(err);
-    result.innerHTML = 'Error looking up postal code. Please try again in a moment.';
+    result.textContent = 'Error looking up postal code. Please try again in a moment.';
   } finally {
     btn.disabled = false;
     btn.textContent = 'Find Ward';
